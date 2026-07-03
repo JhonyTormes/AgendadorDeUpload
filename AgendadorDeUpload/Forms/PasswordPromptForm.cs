@@ -10,6 +10,7 @@ namespace AgendadorDeUpload.Forms
         public PasswordPromptForm()
         {
             InitializeComponent();
+            Icon = MainForm.LoadAppIcon();
         }
 
         private void InitializeComponent()

@@ -57,18 +57,31 @@ namespace AgendadorDeUpload.Scheduling
 
         public void ClearMarker()
         {
-            var markerPath = GetMarkerPath();
-            if (File.Exists(markerPath))
-                File.Delete(markerPath);
+            foreach (var f in new[] { GetMarkerPath("run"), GetMarkerPath("fail") })
+                if (File.Exists(f)) File.Delete(f);
         }
 
-        private string GetMarkerPath()
+        public void MarkAsFailed()
+        {
+            var path = GetMarkerPath("fail");
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+            File.WriteAllText(path, DateTime.Now.ToString("O"));
+        }
+
+        public bool HasFailed()
+        {
+            return File.Exists(GetMarkerPath("fail"));
+        }
+
+        private string GetMarkerPath(string prefix = "run")
         {
             var scheduled = GetScheduledDateTime();
             var key = scheduled?.ToString("yyyyMMdd_HHmm") ?? "unknown";
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "AgendadorDeUpload", $"run_{key}.marker");
+                "AgendadorDeUpload", $"{prefix}_{key}.marker");
         }
     }
 }

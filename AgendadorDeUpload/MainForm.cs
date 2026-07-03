@@ -1,4 +1,10 @@
 using System;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using AgendadorDeUpload.Security;
 using AgendadorDeUpload.Models;
@@ -13,7 +19,10 @@ namespace AgendadorDeUpload
         private NotifyIcon _trayIcon;
         private ContextMenuStrip _trayMenu;
         private BackupConfig _config;
-        private Timer _scheduleTimer;
+        private System.Windows.Forms.Timer _scheduleTimer;
+        private ToolStripMenuItem _menuCancel;
+        private ToolStripMenuItem _menuRunNow;
+        private bool _configOpen;
 
         public MainForm()
         {
@@ -28,18 +37,38 @@ namespace AgendadorDeUpload
         {
             _trayIcon = new NotifyIcon
             {
-                Icon = System.Drawing.SystemIcons.Application,
+                Icon = LoadAppIcon(),
                 Visible = true,
                 Text = "Agendador de Upload"
             };
 
             _trayMenu = new ContextMenuStrip();
+            _trayMenu.ShowImageMargin = false;
+            _trayMenu.ShowCheckMargin = false;
             _trayMenu.Items.Add("Configurações", null, OnConfigClick);
-            _trayMenu.Items.Add("Executar backup agora", null, OnRunNowClick);
+            _menuRunNow = new ToolStripMenuItem("Executar backup agora", null, OnRunNowClick);
+            _trayMenu.Items.Add(_menuRunNow);
+            _menuCancel = new ToolStripMenuItem("Cancelar", null, OnCancelClick) { Enabled = false };
+            _trayMenu.Items.Add(_menuCancel);
             _trayMenu.Items.Add(new ToolStripSeparator());
             _trayMenu.Items.Add("Sair", null, OnExitClick);
             _trayIcon.ContextMenuStrip = _trayMenu;
             _trayIcon.DoubleClick += (s, e) => OnConfigClick(null, null);
+        }
+
+        internal static Icon LoadAppIcon()
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                using (var stream = assembly.GetManifestResourceStream("AgendadorDeUpload.envio.ico"))
+                {
+                    if (stream != null)
+                        return new Icon(stream);
+                }
+            }
+            catch { }
+            return SystemIcons.Application;
         }
 
         private void ShowStatus(string message)
@@ -87,7 +116,25 @@ namespace AgendadorDeUpload
 
             if (forceRun)
             {
-                ExecuteBackupFlow();
+                _ = ExecuteBackupFlow();
+                return;
+            }
+
+            var sched = new SchedulerService(_config.ScheduledTime);
+            if (sched.HasFailed())
+            {
+                _trayIcon.ShowBalloonTip(5000, "Falha anterior",
+                    "O backup agendado falhou na última execução. O agendamento foi cancelado.", ToolTipIcon.Warning);
+                ShowStatus("Falha anterior — aguardando revisão");
+                sched.ClearMarker();
+                _config.ScheduledTime = "";
+                try
+                {
+                    var json = _config.ToJson();
+                    var encrypted = SecureStorage.Encrypt(json, AppState.MasterPassword);
+                    SecureStorage.SaveToFile(SecureStorage.GetDefaultSettingsPath(), encrypted);
+                }
+                catch { }
                 return;
             }
 
@@ -101,9 +148,9 @@ namespace AgendadorDeUpload
 
             var scheduler = new SchedulerService(_config.ScheduledTime);
 
-            if (scheduler.ShouldRunNow() && !scheduler.HasRun())
+            if (scheduler.ShouldRunNow() && !scheduler.HasRun() && !AppState.IsRunning)
             {
-                ExecuteBackupFlow();
+                _ = ExecuteBackupFlow();
                 return;
             }
 
@@ -114,115 +161,185 @@ namespace AgendadorDeUpload
                     $"Backup programado para {scheduled:dd/MM/yyyy HH:mm}.", ToolTipIcon.Info);
                 ShowStatus($"Aguardando {scheduled:dd/MM HH:mm}");
 
-                _scheduleTimer = new Timer { Interval = 30000 };
+                _scheduleTimer = new System.Windows.Forms.Timer { Interval = 30000 };
                 _scheduleTimer.Tick += (s, args2) =>
                 {
+                    if (AppState.IsRunning) return;
                     var sched = new SchedulerService(_config.ScheduledTime);
                     if (sched.ShouldRunNow() && !sched.HasRun())
                     {
                         _scheduleTimer.Stop();
-                        ExecuteBackupFlow();
+                        _ = ExecuteBackupFlow();
                     }
                 };
                 _scheduleTimer.Start();
             }
             else
             {
-                _trayIcon.ShowBalloonTip(5000, "Configuração inválida",
-                    "Verifique o horário agendado nas configurações.", ToolTipIcon.Warning);
-                ShowStatus("Configuração inválida");
+                ShowStatus("Aguardando configuração");
             }
         }
 
-        private void ExecuteBackupFlow()
+        private void OnCancelClick(object sender, EventArgs e)
+        {
+            AppState.CancelSource?.Cancel();
+            _menuCancel.Enabled = false;
+            ShowStatus("Cancelando...");
+        }
+
+        private async Task ExecuteBackupFlow()
         {
             if (_config == null) return;
-
-            LogService.Write("=== INICIANDO FLUXO DE BACKUP ===");
-            _trayIcon.ShowBalloonTip(3000, "Backup", "Iniciando backup...", ToolTipIcon.Info);
-            ShowStatus("Iniciando backup...");
-
-            var backupService = new BackupService(_config);
-            var fileName = backupService.GenerateBackupFileName();
-            var fullPath = System.IO.Path.Combine(_config.BackupFolder, fileName);
-
-            var result = backupService.ExecuteBackup(fullPath, msg => ShowStatus(msg));
-            if (!result.Success)
+            if (AppState.IsRunning)
             {
-                LogService.WriteError("Backup falhou. Encerrando.");
-                _trayIcon.ShowBalloonTip(5000, "Erro",
-                    $"Falha no backup:\n{result.ErrorMessage}", ToolTipIcon.Error);
-                Application.Exit();
+                LogService.Write("Backup já está em execução. Ignorando.");
+                _trayIcon.ShowBalloonTip(3000, "Aviso", "Já existe um backup em andamento.", ToolTipIcon.Warning);
                 return;
             }
 
-            ShowStatus("Aguardando estabilização...");
-            var monitor = new FileMonitorService(fullPath, _config.StableSeconds, _config.PollIntervalMs);
-            if (!monitor.WaitForStabilization((size, stable) =>
-                ShowStatus(stable ? "Arquivo estável. Iniciando upload..." : $"Tamanho: {FormatSize(size)}")))
-            {
-                Application.Exit();
-                return;
-            }
+            AppState.IsRunning = true;
+            AppState.CancelSource = new CancellationTokenSource();
+            var ct = AppState.CancelSource.Token;
+            _menuCancel.Enabled = true;
+            _menuRunNow.Enabled = false;
 
-            bool isMega = _config.AuthMethod == "Mega";
-            ShowStatus(isMega ? "Enviando para Mega..." : "Enviando para Google Drive...");
             try
             {
-                if (isMega)
+                LogService.Write("=== INICIANDO FLUXO DE BACKUP ===");
+                _trayIcon.ShowBalloonTip(3000, "Backup", "Iniciando backup...", ToolTipIcon.Info);
+                ShowStatus("Iniciando backup...");
+
+                var backupService = new BackupService(_config);
+
+                while (backupService.IsBackupRunning())
                 {
-                    var mega = new MegaUploadService(_config.MegaEmail, _config.MegaPassword, _config.MegaFolder);
-                    var link = mega.Upload(fullPath, msg => ShowStatus(msg));
-                    LogService.Write($"Upload Mega concluído: {link}");
+                    LogService.Write("Backup já em andamento. Aguardando 10 minutos...");
+                    ShowStatus("Backup em andamento, aguardando...");
+                    await Task.Delay(600000, ct);
                 }
-                else
+
+                ct.ThrowIfCancellationRequested();
+
+                var fileName = backupService.GenerateBackupFileName();
+                var fullPath = System.IO.Path.Combine(_config.BackupFolder, fileName);
+
+                var backupTask = Task.Run(() => backupService.ExecuteBackup(fullPath, msg => ShowStatus(msg)), ct);
+
+                while (!backupTask.IsCompleted)
                 {
-                    var uploadService = new UploadService(
-                        _config.AuthMethod,
-                        _config.ServiceAccountJson,
-                        _config.OAuthClientId,
-                        _config.OAuthClientSecret,
-                        _config.OAuthRefreshToken,
-                        _config.GoogleDriveFolderId);
-                    var fileId = uploadService.Upload(fullPath, msg => ShowStatus(msg));
-                    LogService.Write($"Upload concluído. File ID: {fileId}");
+                    await Task.Delay(1000);
+                    if (ct.IsCancellationRequested)
+                    {
+                        backupService.KillBackup();
+                        throw new OperationCanceledException();
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                if (_config.DeleteOnFailure)
+
+                var result = backupTask.Result;
+                if (!result.Success)
+                {
+                    new SchedulerService(_config.ScheduledTime).MarkAsFailed();
+                    LogService.WriteError("Backup falhou. Encerrando.");
+                    _trayIcon.ShowBalloonTip(5000, "Erro",
+                        $"Falha no backup:\n{result.ErrorMessage}", ToolTipIcon.Error);
+                    Application.Exit();
+                    return;
+                }
+
+                ct.ThrowIfCancellationRequested();
+                ShowStatus("Aguardando estabilização...");
+                var monitor = new FileMonitorService(fullPath, _config.StableSeconds, _config.PollIntervalMs);
+                if (!monitor.WaitForStabilization((size, stable) =>
+                    ShowStatus(stable ? "Arquivo estável. Iniciando upload..." : $"Tamanho: {FormatSize(size)}")))
+                {
+                    Application.Exit();
+                    return;
+                }
+
+                ct.ThrowIfCancellationRequested();
+                bool isMega = _config.AuthMethod == "Mega";
+                ShowStatus(isMega ? "Enviando para Mega..." : "Enviando para Google Drive...");
+                try
+                {
+                    if (isMega)
+                    {
+                        var mega = new MegaUploadService(_config.MegaEmail, _config.MegaPassword, _config.MegaFolder, _config.MegaFolderId);
+                        var link = mega.Upload(fullPath, msg => ShowStatus(msg), ct);
+                        LogService.Write($"Upload Mega concluído: {link}");
+                    }
+                    else
+                    {
+                        var uploadService = new UploadService(
+                            _config.AuthMethod,
+                            _config.ServiceAccountJson,
+                            _config.OAuthClientId,
+                            _config.OAuthClientSecret,
+                            _config.OAuthRefreshToken,
+                            _config.GoogleDriveFolderId);
+                        var fileId = uploadService.Upload(fullPath, msg => ShowStatus(msg));
+                        LogService.Write($"Upload concluído. File ID: {fileId}");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    LogService.Write("Upload cancelado pelo usuário.");
+                    ShowStatus("Upload cancelado");
+                    if (_config.DeleteOnFailure)
+                    {
+                        try { System.IO.File.Delete(fullPath); } catch { }
+                    }
+                    _trayIcon.ShowBalloonTip(5000, "Cancelado", "Upload cancelado.", ToolTipIcon.Info);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (_config.DeleteOnFailure)
+                    {
+                        try { System.IO.File.Delete(fullPath); } catch { }
+                    }
+                    LogService.WriteError("Falha no upload", ex);
+                    _trayIcon.ShowBalloonTip(5000, "Erro",
+                        $"Falha no upload:\n{ex.Message}", ToolTipIcon.Error);
+                    Application.Exit();
+                    return;
+                }
+
+                if (_config.DeleteAfterUpload)
                 {
                     try { System.IO.File.Delete(fullPath); } catch { }
                 }
 
-                LogService.WriteError("Falha no upload", ex);
-                _trayIcon.ShowBalloonTip(5000, "Erro",
-                    $"Falha no upload:\n{ex.Message}", ToolTipIcon.Error);
-                Application.Exit();
-                return;
+                ShowStatus("Backup concluído!");
+                LogService.Write("=== BACKUP FINALIZADO COM SUCESSO ===");
+
+                var scheduler = new SchedulerService(_config.ScheduledTime);
+                scheduler.MarkAsRun();
+
+                _trayIcon.ShowBalloonTip(5000, "Sucesso",
+                    isMega ? "Backup concluído e enviado ao Mega." : "Backup concluído e enviado ao Google Drive.", ToolTipIcon.Info);
+
+                var exitTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+                exitTimer.Tick += (s, args) =>
+                {
+                    exitTimer.Stop();
+                    Application.Exit();
+                };
+                exitTimer.Start();
             }
-
-            if (_config.DeleteAfterUpload)
+            catch (OperationCanceledException)
             {
-                try { System.IO.File.Delete(fullPath); } catch { }
+                LogService.Write("Fluxo de backup cancelado pelo usuário.");
+                _trayIcon.ShowBalloonTip(3000, "Cancelado", "Operação cancelada.", ToolTipIcon.Info);
+                ShowStatus("Cancelado");
             }
-
-            ShowStatus("Backup concluído!");
-            LogService.Write("=== BACKUP FINALIZADO COM SUCESSO ===");
-
-            var scheduler = new SchedulerService(_config.ScheduledTime);
-            scheduler.MarkAsRun();
-
-            _trayIcon.ShowBalloonTip(5000, "Sucesso",
-                isMega ? "Backup concluído e enviado ao Mega." : "Backup concluído e enviado ao Google Drive.", ToolTipIcon.Info);
-
-            var exitTimer = new Timer { Interval = 5000 };
-            exitTimer.Tick += (s, args) =>
+            finally
             {
-                exitTimer.Stop();
-                Application.Exit();
-            };
-            exitTimer.Start();
+                _menuCancel.Enabled = false;
+                _menuRunNow.Enabled = true;
+                AppState.IsRunning = false;
+                AppState.CancelSource?.Dispose();
+                AppState.CancelSource = null;
+            }
         }
 
         private static string FormatSize(long bytes)
@@ -236,27 +353,52 @@ namespace AgendadorDeUpload
 
         private void OnConfigClick(object sender, EventArgs e)
         {
-            using (var prompt = new PasswordPromptForm())
+            if (_configOpen) return;
+
+            if (AppState.IsRunning)
             {
-                if (prompt.ShowDialog() != DialogResult.OK) return;
+                var result = MessageBox.Show("Um backup está em andamento. Abrir configurações pode interromper o agendamento, mas o backup atual continuará. Deseja continuar?",
+                    "Aviso", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (result != DialogResult.Yes) return;
+            }
 
-                var settingsPath = SecureStorage.GetDefaultSettingsPath();
-                var encrypted = SecureStorage.LoadFromFile(settingsPath);
-
-                string json = null;
-                if (encrypted != null)
+            string password;
+            if (AppState.LastAuthTime.HasValue && (DateTime.Now - AppState.LastAuthTime.Value).TotalMinutes < 1)
+            {
+                password = AppState.MasterPassword;
+            }
+            else
+            {
+                using (var prompt = new PasswordPromptForm())
                 {
-                    json = SecureStorage.Decrypt(encrypted, prompt.Password);
-                    if (json == null)
-                    {
-                        MessageBox.Show("Senha incorreta.", "Erro",
-                            MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        return;
-                    }
+                    if (prompt.ShowDialog() != DialogResult.OK) return;
+                    password = prompt.Password;
                 }
+            }
 
+            var settingsPath = SecureStorage.GetDefaultSettingsPath();
+            var encrypted = SecureStorage.LoadFromFile(settingsPath);
+
+            string json = null;
+            if (encrypted != null)
+            {
+                json = SecureStorage.Decrypt(encrypted, password);
+                if (json == null)
+                {
+                    MessageBox.Show("Senha incorreta.", "Erro",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+            }
+
+            _configOpen = true;
+
+            AppState.LastAuthTime = DateTime.Now;
+
+            try
+            {
                 var config = json != null ? BackupConfig.FromJson(json) : new BackupConfig();
-                using (var configForm = new ConfigForm(config, prompt.Password))
+                using (var configForm = new ConfigForm(config, password))
                 {
                     configForm.ShowDialog();
                     if (configForm.DialogResult == DialogResult.OK)
@@ -264,18 +406,57 @@ namespace AgendadorDeUpload
                         AppState.MasterPassword = configForm.SavedPassword;
                         _config = null;
                         TryLoadConfig();
-                        StartScheduler();
+                        if (!AppState.IsRunning)
+                            StartScheduler();
                     }
                 }
             }
+            finally
+            {
+                _configOpen = false;
+            }
         }
 
-        private void OnRunNowClick(object sender, EventArgs e)
+        private async void OnRunNowClick(object sender, EventArgs e)
         {
+            if (AppState.IsRunning)
+            {
+                _trayIcon.ShowBalloonTip(3000, "Aviso", "Já existe um backup em andamento.", ToolTipIcon.Warning);
+                return;
+            }
+
+            string password;
+            if (AppState.LastAuthTime.HasValue && (DateTime.Now - AppState.LastAuthTime.Value).TotalMinutes < 1)
+            {
+                password = AppState.MasterPassword;
+            }
+            else
+            {
+                using (var prompt = new PasswordPromptForm())
+                {
+                    if (prompt.ShowDialog() != DialogResult.OK) return;
+                    var settingsPath = SecureStorage.GetDefaultSettingsPath();
+                    var encrypted = SecureStorage.LoadFromFile(settingsPath);
+                    if (encrypted != null)
+                    {
+                        var json = SecureStorage.Decrypt(encrypted, prompt.Password);
+                        if (json == null)
+                        {
+                            MessageBox.Show("Senha incorreta.", "Erro",
+                                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                    }
+                    AppState.MasterPassword = prompt.Password;
+                    AppState.LastAuthTime = DateTime.Now;
+                    password = prompt.Password;
+                }
+            }
+
             if (_config == null && !TryLoadConfig())
                 return;
 
-            ExecuteBackupFlow();
+            await ExecuteBackupFlow();
         }
 
         private void OnExitClick(object sender, EventArgs e)

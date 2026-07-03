@@ -1,6 +1,7 @@
 using System;
 using System.Data.SqlClient;
 using System.IO;
+using System.Threading;
 using AgendadorDeUpload.Models;
 
 namespace AgendadorDeUpload.Services
@@ -17,7 +18,10 @@ namespace AgendadorDeUpload.Services
         public string GenerateBackupFileName()
         {
             var random = Guid.NewGuid().ToString("N").Substring(0, 8);
-            return $"backup_{_config.SqlDatabase}_{random}.bak";
+            var date = DateTime.Now.ToString("yyyy-MM-dd");
+            var customName = string.IsNullOrWhiteSpace(_config.BackupFileName) ? "" : $" {_config.BackupFileName.Trim()}";
+            var dbName = _config.SqlDatabase ?? "backup";
+            return $"{dbName}{customName} {date} {random}.bak";
         }
 
         public string BuildConnectionString()
@@ -27,6 +31,61 @@ namespace AgendadorDeUpload.Services
                 return $"Server={_config.SqlServer};Database={_config.SqlDatabase};Integrated Security=True;Connection Timeout=30;";
             }
             return $"Server={_config.SqlServer};Database={_config.SqlDatabase};User Id={_config.SqlUsername};Password={_config.SqlPassword};Connection Timeout=30;";
+        }
+
+        public bool IsBackupRunning()
+        {
+            try
+            {
+                var connStr = BuildConnectionString();
+                using (var conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (var cmd = new SqlCommand(@"
+                        SELECT COUNT(*) FROM sys.dm_exec_requests r
+                        CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                        WHERE r.command = 'BACKUP DATABASE'
+                          AND t.text LIKE N'%BACKUP DATABASE [' + @db + N']%'
+                          AND r.status NOT IN ('sleeping', 'background')", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@db", _config.SqlDatabase);
+                        return (int)cmd.ExecuteScalar() > 0;
+                    }
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public void KillBackup()
+        {
+            try
+            {
+                var connStr = BuildConnectionString();
+                using (var conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (var cmd = new SqlCommand(@"
+                        DECLARE @sid INT;
+                        SELECT @sid = r.session_id FROM sys.dm_exec_requests r
+                        CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                        WHERE r.command = 'BACKUP DATABASE'
+                          AND t.text LIKE N'%BACKUP DATABASE [' + @db + N']%'
+                          AND r.status NOT IN ('sleeping', 'background');
+                        IF @sid IS NOT NULL EXEC('KILL ' + @sid);", conn))
+                    {
+                        cmd.Parameters.AddWithValue("@db", _config.SqlDatabase);
+                        cmd.ExecuteNonQuery();
+                    }
+                }
+                LogService.Write("Backup cancelado via KILL.");
+            }
+            catch (Exception ex)
+            {
+                LogService.WriteError("Erro ao cancelar backup", ex);
+            }
         }
 
         public BackupResult ExecuteBackup(string backupFullPath, Action<string> onLog = null)

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using CG.Web.MegaApiClient;
 
 namespace AgendadorDeUpload.Services
@@ -10,15 +11,17 @@ namespace AgendadorDeUpload.Services
         private readonly string _email;
         private readonly string _password;
         private readonly string _remoteFolder;
+        private readonly string _remoteFolderId;
 
-        public MegaUploadService(string email, string password, string remoteFolder = null)
+        public MegaUploadService(string email, string password, string remoteFolder = null, string remoteFolderId = null)
         {
             _email = email;
             _password = password;
             _remoteFolder = remoteFolder;
+            _remoteFolderId = remoteFolderId;
         }
 
-        public string Upload(string filePath, Action<string> onProgress = null)
+        public string Upload(string filePath, Action<string> onProgress = null, CancellationToken ct = default)
         {
             LogService.Write("Autenticando no Mega...");
             onProgress?.Invoke("Autenticando no Mega...");
@@ -63,14 +66,23 @@ namespace AgendadorDeUpload.Services
                         onProgress?.Invoke(msg);
                     });
 
-                    uploaded = client.Upload(progressStream, fileName, parent, null, null);
+                    uploaded = client.Upload(progressStream, fileName, parent, null, ct);
                 }
 
-                var link = client.GetDownloadLink(uploaded);
-                LogService.Write($"Upload concluído: {link}");
+                string link = null;
+                try
+                {
+                    link = client.GetDownloadLink(uploaded).ToString();
+                }
+                catch (Exception ex)
+                {
+                    LogService.Write($"Aviso: não foi possível obter link público ({ex.Message})");
+                }
+
+                LogService.Write($"Upload concluído: {link ?? "sem link público"}");
                 onProgress?.Invoke("Upload concluído com sucesso!");
 
-                return link.ToString();
+                return link ?? "ok";
             }
             finally
             {
@@ -80,20 +92,24 @@ namespace AgendadorDeUpload.Services
 
         private INode ResolveParentNode(MegaApiClient client, INode[] nodes)
         {
-            if (string.IsNullOrWhiteSpace(_remoteFolder))
+            if (!string.IsNullOrWhiteSpace(_remoteFolderId))
             {
-                var root = nodes.FirstOrDefault(n => n.Type == NodeType.Root);
-                return root ?? nodes.First();
+                var byId = nodes.FirstOrDefault(n =>
+                    n.Type == NodeType.Directory && string.Equals(n.Id, _remoteFolderId, StringComparison.OrdinalIgnoreCase));
+                if (byId != null)
+                    return byId;
             }
 
-            var target = nodes.FirstOrDefault(n =>
-                n.Type == NodeType.Directory && n.Name.Equals(_remoteFolder, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(_remoteFolder))
+            {
+                var byName = nodes.FirstOrDefault(n =>
+                    n.Type == NodeType.Directory && string.Equals(n.Name, _remoteFolder, StringComparison.OrdinalIgnoreCase));
+                if (byName != null)
+                    return byName;
+            }
 
-            if (target != null)
-                return target;
-
-            var root2 = nodes.FirstOrDefault(n => n.Type == NodeType.Root);
-            return root2 ?? nodes.First();
+            var root = nodes.FirstOrDefault(n => n.Type == NodeType.Root);
+            return root ?? nodes.First();
         }
     }
 }

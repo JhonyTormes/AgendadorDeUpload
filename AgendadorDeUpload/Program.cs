@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Windows.Forms;
 using AgendadorDeUpload.Models;
 using AgendadorDeUpload.Security;
@@ -11,6 +12,22 @@ namespace AgendadorDeUpload
     {
         [STAThread]
         static void Main()
+        {
+            bool createdNew;
+            using (var mutex = new Mutex(true, "AgendadorDeUpload", out createdNew))
+            {
+                if (!createdNew)
+                {
+                    MessageBox.Show("O Agendador de Upload já está em execução.", "Aviso",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                RunApp();
+            }
+        }
+
+        private static void RunApp()
         {
             try
             {
@@ -42,11 +59,23 @@ namespace AgendadorDeUpload
                         }
 
                         AppState.MasterPassword = prompt.Password;
+                        AppState.LastAuthTime = DateTime.Now;
                     }
                 }
                 else
                 {
-                    using (var configForm = new ConfigForm(new BackupConfig(), null))
+                    using (var setupForm = new MasterPasswordSetupForm())
+                    {
+                        if (setupForm.ShowDialog() != DialogResult.OK)
+                        {
+                            LogService.Write("Configuração cancelada. Encerrando.");
+                            return;
+                        }
+                        AppState.MasterPassword = setupForm.SavedPassword;
+                        AppState.LastAuthTime = DateTime.Now;
+                    }
+
+                    using (var configForm = new ConfigForm(new BackupConfig(), AppState.MasterPassword))
                     {
                         if (configForm.ShowDialog() != DialogResult.OK)
                         {
@@ -54,6 +83,7 @@ namespace AgendadorDeUpload
                             return;
                         }
                         AppState.MasterPassword = configForm.SavedPassword;
+                        AppState.LastAuthTime = DateTime.Now;
                     }
                 }
 

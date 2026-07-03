@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
 using CG.Web.MegaApiClient;
@@ -18,6 +19,7 @@ namespace AgendadorDeUpload.Forms
         {
             _nodes = nodes;
             InitializeComponent();
+            Icon = MainForm.LoadAppIcon();
             BuildTree();
         }
 
@@ -63,23 +65,28 @@ namespace AgendadorDeUpload.Forms
         private void BuildTree()
         {
             var root = _nodes.FirstOrDefault(n => n.Type == NodeType.Root);
+            var visited = new HashSet<string>();
+
             if (root != null)
             {
+                visited.Add(root.Id);
                 var rootNode = treeView.Nodes.Add("Raiz");
                 rootNode.Tag = root;
-                AddChildNodes(rootNode, root.Id);
+                AddChildNodes(rootNode, root.Id, visited);
                 rootNode.Expand();
             }
         }
 
-        private void AddChildNodes(TreeNode parentNode, string parentId)
+        private void AddChildNodes(TreeNode parentNode, string parentId, HashSet<string> visited)
         {
             foreach (var child in _nodes.Where(n =>
                 n.Type == NodeType.Directory && string.Equals(n.ParentId, parentId, StringComparison.Ordinal)))
             {
-                var node = parentNode.Nodes.Add(child.Name);
+                visited.Add(child.Id);
+                var displayName = string.IsNullOrEmpty(child.Name) ? "(sem nome)" : child.Name;
+                var node = parentNode.Nodes.Add(displayName);
                 node.Tag = child;
-                AddChildNodes(node, child.Id);
+                AddChildNodes(node, child.Id, visited);
             }
         }
 

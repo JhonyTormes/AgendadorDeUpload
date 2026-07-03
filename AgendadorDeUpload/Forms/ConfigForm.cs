@@ -1,5 +1,6 @@
 using System;
 using System.Data.SqlClient;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 using System.Threading;
@@ -12,6 +13,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Drive.v3;
 using Google.Apis.Util.Store;
 
+
 namespace AgendadorDeUpload.Forms
 {
     public partial class ConfigForm : Form
@@ -20,6 +22,7 @@ namespace AgendadorDeUpload.Forms
         private readonly string _existingPassword;
         private string _selectedJsonContent;
         private string _oauthRefreshToken;
+        private bool _scheduleCancelled;
         public string SavedPassword { get; private set; }
 
         public ConfigForm(BackupConfig config, string existingPassword)
@@ -27,6 +30,7 @@ namespace AgendadorDeUpload.Forms
             _config = config;
             _existingPassword = existingPassword;
             InitializeComponent();
+            Icon = MainForm.LoadAppIcon();
             LoadConfig();
         }
 
@@ -50,9 +54,11 @@ namespace AgendadorDeUpload.Forms
             txtMegaEmail.Text = _config.MegaEmail ?? "";
             txtMegaPassword.Text = _config.MegaPassword ?? "";
             txtMegaFolder.Text = _config.MegaFolder ?? "";
+            txtMegaFolderId.Text = _config.MegaFolderId ?? "";
 
             txtDriveFolderId.Text = _config.GoogleDriveFolderId ?? "";
 
+            txtBackupFileName.Text = _config.BackupFileName ?? "";
             chkDeleteAfterUpload.Checked = _config.DeleteAfterUpload;
             chkDeleteOnFailure.Checked = _config.DeleteOnFailure;
 
@@ -71,18 +77,19 @@ namespace AgendadorDeUpload.Forms
                 rbAuthServiceAccount.Checked = true;
             }
 
-            if (DateTime.TryParseExact(_config.ScheduledTime, "yyyy-MM-dd HH:mm",
+            bool hasSchedule = DateTime.TryParseExact(_config.ScheduledTime, "yyyy-MM-dd HH:mm",
                 System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var dt) && dt > DateTime.Now)
+                System.Globalization.DateTimeStyles.None, out var dt) && dt > DateTime.Now;
+            if (hasSchedule)
                 dtpSchedule.Value = dt;
             else
                 dtpSchedule.Value = DateTime.Now.AddHours(1);
 
-            bool hasPassword = !string.IsNullOrEmpty(_existingPassword);
-            lblMasterPassword.Visible = !hasPassword;
-            txtMasterPassword.Visible = !hasPassword;
-            lblConfirmPassword.Visible = !hasPassword;
-            txtConfirmPassword.Visible = !hasPassword;
+            _scheduleCancelled = !hasSchedule;
+            UpdateScheduleButton();
+
+            dtpSchedule.ValueChanged -= DtpSchedule_ValueChanged;
+            dtpSchedule.ValueChanged += DtpSchedule_ValueChanged;
 
             txtSqlUsername.Enabled = !_config.UseWindowsAuth;
             txtSqlPassword.Enabled = !_config.UseWindowsAuth;
@@ -100,9 +107,12 @@ namespace AgendadorDeUpload.Forms
             txtMegaEmail.Visible = isMega;
             lblMegaPassword.Visible = isMega;
             txtMegaPassword.Visible = isMega;
+            btnTestMegaLogin.Visible = isMega;
             lblMegaFolder.Visible = isMega;
             txtMegaFolder.Visible = isMega;
             btnSelectMegaFolder.Visible = isMega;
+            lblMegaFolderId.Visible = isMega;
+            txtMegaFolderId.Visible = isMega;
 
             lblServiceAccount.Visible = isSA;
             txtServiceAccountPath.Visible = isSA;
@@ -118,6 +128,46 @@ namespace AgendadorDeUpload.Forms
             bool showDriveId = isSA || isOAuth;
             lblDriveFolderId.Visible = showDriveId;
             txtDriveFolderId.Visible = showDriveId;
+        }
+
+        private void UpdateScheduleButton()
+        {
+            if (_scheduleCancelled)
+                btnScheduleAction.Text = "Agendar";
+            else
+                btnScheduleAction.Text = "Cancelar Agendamento";
+            dtpSchedule.Enabled = true;
+        }
+
+        private void DtpSchedule_ValueChanged(object sender, EventArgs e)
+        {
+            _scheduleCancelled = true;
+            UpdateScheduleButton();
+        }
+
+        private void BtnScheduleAction_Click(object sender, EventArgs e)
+        {
+            if (_scheduleCancelled)
+            {
+                if (dtpSchedule.Value <= DateTime.Now)
+                {
+                    MessageBox.Show(this, "Defina uma data/hora futura para agendar.",
+                        "Agendar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                _scheduleCancelled = false;
+                UpdateScheduleButton();
+            }
+            else
+            {
+                var result = MessageBox.Show(this, "Deseja cancelar o agendamento atual?",
+                    "Cancelar Agendamento", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    _scheduleCancelled = true;
+                    UpdateScheduleButton();
+                }
+            }
         }
 
         private void RbAuthMethod_CheckedChanged(object sender, EventArgs e)
@@ -137,6 +187,152 @@ namespace AgendadorDeUpload.Forms
             {
                 if (dlg.ShowDialog() == DialogResult.OK)
                     txtBackupFolder.Text = dlg.SelectedPath;
+            }
+        }
+
+        private async void BtnTestFolderPerm_Click(object sender, EventArgs e)
+        {
+            var folder = txtBackupFolder.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                MessageBox.Show(this, "Informe a pasta de backup primeiro.", "Testar Permissão",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            btnTestFolderPerm.Enabled = false;
+            try
+            {
+                try
+                {
+                    if (!Directory.Exists(folder))
+                        Directory.CreateDirectory(folder);
+
+                    var testFile = Path.Combine(folder, "_perm_test_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp");
+                    File.WriteAllText(testFile, "test");
+                    File.Delete(testFile);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"O SQL Server não consegue escrever nesta pasta.\n\n{ex.Message}",
+                        "Testar Permissão", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                var ok = await Task.Run(() => TestSqlFolderWriteAccess(folder));
+                if (ok)
+                    MessageBox.Show(this, $"O SQL Server consegue escrever na pasta.", "Testar Permissão", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                else
+                    MessageBox.Show(this, $"O SQL Server não consegue escrever na pasta.", "Testar Permissão", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnTestFolderPerm.Enabled = true;
+            }
+        }
+
+        private bool TestSqlFolderWriteAccess(string folder)
+        {
+            var server = txtSqlServer.Text.Trim();
+            var database = txtSqlDatabase.Text.Trim();
+            if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(database))
+                return false;
+
+            try
+            {
+                var builder = new SqlConnectionStringBuilder
+                {
+                    DataSource = server,
+                    InitialCatalog = database,
+                    ConnectTimeout = 5
+                };
+
+                if (chkWindowsAuth.Checked)
+                    builder.IntegratedSecurity = true;
+                else
+                {
+                    builder.UserID = txtSqlUsername.Text.Trim();
+                    builder.Password = txtSqlPassword.Text;
+                }
+
+                using (var conn = new SqlConnection(builder.ConnectionString))
+                {
+                    conn.Open();
+
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = @"
+                            DECLARE @enabled int;
+                            SELECT @enabled = CAST(value_in_use AS int) FROM sys.configurations WHERE name = 'xp_cmdshell';
+                            IF @enabled = 0
+                            BEGIN
+                                EXEC sp_configure 'show advanced options', 1; RECONFIGURE;
+                                EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;
+                            END";
+                        cmd.ExecuteNonQuery();
+                    }
+
+                    var testFileName = Path.Combine(folder, "_sql_perm_test_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp");
+                    var sqlEscapePath = testFileName.Replace("'", "''");
+
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = $"EXEC xp_cmdshell 'echo test > \"{sqlEscapePath}\"'";
+                        cmd.ExecuteNonQuery();
+                    }
+
+                    if (File.Exists(testFileName))
+                    {
+                        File.Delete(testFileName);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async void BtnTestMegaLogin_Click(object sender, EventArgs e)
+        {
+            var email = txtMegaEmail.Text.Trim();
+            var password = txtMegaPassword.Text;
+
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+            {
+                MessageBox.Show(this, "Preencha o e-mail e senha do Mega primeiro.",
+                    "Testar Login", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            btnTestMegaLogin.Enabled = false;
+            btnTestMegaLogin.Text = "Testando...";
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                var ok = await Task.Run(() =>
+                {
+                    try
+                    {
+                        var client = new MegaApiClient();
+                        client.Login(email, password);
+                        client.Logout();
+                        return true;
+                    }
+                    catch { return false; }
+                });
+
+                MessageBox.Show(this,
+                    ok ? "Teste de conexão com o Mega funcionou." : "Falha ao autenticar no Mega. Verifique e-mail e senha.",
+                    "Testar Login", MessageBoxButtons.OK, ok ? MessageBoxIcon.Information : MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnTestMegaLogin.Enabled = true;
+                Cursor = Cursors.Default;
             }
         }
 
@@ -219,9 +415,14 @@ namespace AgendadorDeUpload.Forms
             }
 
             btnSelectMegaFolder.Enabled = false;
+            btnSelectMegaFolder.Text = "Carregando...";
+            Cursor = Cursors.WaitCursor;
+            var oldFolder = txtMegaFolder.Text;
+            txtMegaFolder.Text = "Conectando ao Mega...";
             try
             {
-                INode[] nodes = await Task.Run(() =>
+
+                INode[] nodes = await Task.Run(async () =>
                 {
                     var client = new MegaApiClient();
                     client.Login(email, password);
@@ -229,6 +430,8 @@ namespace AgendadorDeUpload.Forms
                     client.Logout();
                     return result;
                 });
+
+                txtMegaFolder.Text = oldFolder;
 
                 using (var picker = new MegaFolderPickerForm(nodes))
                 {
@@ -240,12 +443,15 @@ namespace AgendadorDeUpload.Forms
             }
             catch (Exception ex)
             {
+                txtMegaFolder.Text = oldFolder;
                 MessageBox.Show(this, $"Erro ao conectar no Mega:\n{ex.Message}",
                     "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 btnSelectMegaFolder.Enabled = true;
+                btnSelectMegaFolder.Text = "Selecionar...";
+                Cursor = Cursors.Default;
             }
         }
 
@@ -298,6 +504,10 @@ namespace AgendadorDeUpload.Forms
         }
 
         private void BtnSave_Click(object sender, EventArgs e)
+        {
+            SaveConfig(_scheduleCancelled ? "" : dtpSchedule.Value.ToString("yyyy-MM-dd HH:mm"));
+        }
+        private void SaveConfig(string scheduledTime)
         {
             if (string.IsNullOrWhiteSpace(txtSqlServer.Text))
             {
@@ -358,39 +568,7 @@ namespace AgendadorDeUpload.Forms
                 return;
             }
 
-            if (dtpSchedule.Value <= DateTime.Now)
-            {
-                MessageBox.Show(this, "A data/hora agendada deve ser no futuro.",
-                    "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            string encryptPassword;
-            if (string.IsNullOrEmpty(_existingPassword))
-            {
-                var newPassword = txtMasterPassword.Text;
-                var confirmPassword = txtConfirmPassword.Text;
-
-                if (string.IsNullOrWhiteSpace(newPassword))
-                {
-                    MessageBox.Show(this, "Defina uma senha mestra para proteger as configurações.",
-                        "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                if (newPassword != confirmPassword)
-                {
-                    MessageBox.Show(this, "As senhas não conferem.", "Validação",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-
-                encryptPassword = newPassword;
-            }
-            else
-            {
-                encryptPassword = _existingPassword;
-            }
+            string encryptPassword = _existingPassword;
 
             var config = new BackupConfig
             {
@@ -403,7 +581,7 @@ namespace AgendadorDeUpload.Forms
                 ServiceAccountJsonPath = txtServiceAccountPath.Text,
                 ServiceAccountJson = _selectedJsonContent,
                 GoogleDriveFolderId = txtDriveFolderId.Text.Trim(),
-                ScheduledTime = dtpSchedule.Value.ToString("yyyy-MM-dd HH:mm"),
+                ScheduledTime = scheduledTime,
                 StableSeconds = _config.StableSeconds,
                 PollIntervalMs = _config.PollIntervalMs,
                 AuthMethod = authMethod,
@@ -413,6 +591,8 @@ namespace AgendadorDeUpload.Forms
                 MegaEmail = txtMegaEmail.Text.Trim(),
                 MegaPassword = txtMegaPassword.Text,
                 MegaFolder = txtMegaFolder.Text,
+                MegaFolderId = txtMegaFolderId.Text.Trim(),
+                BackupFileName = txtBackupFileName.Text.Trim(),
                 DeleteAfterUpload = chkDeleteAfterUpload.Checked,
                 DeleteOnFailure = chkDeleteOnFailure.Checked
             };

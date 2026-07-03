@@ -5,10 +5,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>AgendadorDeUpload</RootNamespace>
     <AssemblyName>AgendadorDeUpload</AssemblyName>
-    <ApplicationIcon />
+    <ApplicationIcon>envio.ico</ApplicationIcon>
     <StartupObject />
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="envio.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System.Security" />

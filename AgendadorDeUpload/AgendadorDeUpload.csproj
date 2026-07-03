@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>AgendadorDeUpload</RootNamespace>
+    <AssemblyName>AgendadorDeUpload</AssemblyName>
+    <ApplicationIcon />
+    <StartupObject />
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Costura.Fody" Version="5.7.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Google.Apis.Drive.v3" Version="1.68.0.3568" />
+    <PackageReference Include="MegaApiClient" Version="1.10.5" />
+  </ItemGroup>
+</Project>

@@ -8,20 +8,20 @@ Aplicação Windows Forms (.NET Framework 4.8) que gera backups de bancos SQL Se
 - Backup de banco SQL Server com `BACKUP DATABASE ... WITH COMPRESSION`
 - Suporte a autenticação Windows e SQL Server
 - Detecta se já há um backup em andamento no banco (`sys.dm_exec_requests`) antes de iniciar
-- Permite cancelar o backup em execução (mata a sessão SQL via `KILL`)
+- Permite cancelar o backup em execução.
 - Teste de conexão com timeout de 5 segundos
-- Teste de permissão de pasta: verifica escrita direta + escrita via `xp_cmdshell` do SQL Server
+- Teste de permissão de pasta: verifica escrita direta + escrita do SQL Server
 
 ### Agendamento
-- Agendamento por data/hora única no formato `dd/MM/yyyy HH:mm`
+- Agendamento por data/hora única
 - Botão "Agendar" / "Cancelar Agendamento" no formulário de configuração
 - Alterar o horário no DateTimePicker sempre redefine o estado para "Agendar", exigindo confirmação explícita
-- Timer verifica a cada 30s se o horário agendado chegou
+- Timer verifica a cada 15s se o horário agendado chegou
 - Ao salvar, persiste o horário agendado ou string vazia para desagendar
 - Execução manual via menu "Executar backup agora"
 - Modo `/run` para execução direta via Task Scheduler do Windows
 - Marcadores de execução (`HasRun`) e falha (`HasFailed`) em `%LOCALAPPDATA%\AgendadorDeUpload\`
-- Se um backup falhou na execução anterior, ao abrir o programa o agendamento é cancelado automaticamente
+- Se um backup falhou na execução anterior, ao abrir o programa o agendamento é cancelado automaticamente e um aviso é mostrado
 
 ### Monitoramento de Arquivo
 - Após o backup, monitora o arquivo a cada 5 segundos
@@ -51,20 +51,14 @@ Aplicação Windows Forms (.NET Framework 4.8) que gera backups de bancos SQL Se
 ### Controle de Execução
 - Execução assíncrona (`async Task`) com suporte a `CancellationToken`
 - Botão "Cancelar" no menu do tray para interromper backup/upload em andamento
-- Cancela backup SQL via `KILL <session_id>`; cancela upload Mega via `CancellationToken`
+- Cancela backup SQL; cancela upload Mega via `CancellationToken`
 - Idempotente: `AppState.IsRunning` impede segunda execução simultânea
 - Se config form estiver aberto, não abre outra instância
 
 ### Interface
 - Apenas ícone na bandeja (sem janela visível); duplo clique abre configurações
 - Menu do tray: Configurações, Executar backup agora, Cancelar, Sair
-- `ShowImageMargin = false`, `ShowCheckMargin = false` no menu
 - Status exibido no tooltip do tray icon (máx. 63 caracteres)
-- AppConfig carrega o ícone `envio.ico` como recurso embutido
-
-### Instância Única
-- Mutex nomeado `"AgendadorDeUpload"` impede múltiplas instâncias simultâneas
-- Se o `.exe` for executado enquanto já estiver rodando, mostra aviso e fecha
 
 ### Logs
 - Log diário em `%EXEDIR%\Logs\log_YYYYMMDD.txt`
@@ -115,29 +109,6 @@ AgendadorDeUpload/
     └── SchedulerService.cs       # Agendamento por data/hora, marcadores
 ```
 
-### Fluxo de Inicialização
-
-1. `Program.Main()` — obtém Mutex de instância única
-2. `LogService.Initialize()` — inicia logging
-3. Se `settings.enc` existe → `PasswordPromptForm` para senha → descriptografa config
-4. Se `settings.enc` não existe → `MasterPasswordSetupForm` (cria senha) → `ConfigForm` (configuração inicial)
-5. `Application.Run(new MainForm())` — inicia tray icon
-
-### Fluxo de Backup
-
-1. `MainForm_Load` ou `StartScheduler` ou `OnRunNowClick` ou `/run`
-2. `ExecuteBackupFlow()` (async Task)
-3. `BackupService.IsBackupRunning()` — verifica se já há backup rodando
-4. Aguarda 10min se outro backup estiver em andamento
-5. `BackupService.GenerateBackupFileName()` — gera nome: `{Database} {customName} {yyyy-MM-dd} {8chars}.bak`
-6. `BackupService.ExecuteBackup()` — executa `BACKUP DATABASE ... WITH COMPRESSION`
-7. Loop de polling `Task.Delay(1000)` com verificação de `CancellationToken`
-8. Se cancelado → `BackupService.KillBackup()` via `KILL <session_id>`
-9. `FileMonitorService.WaitForStabilization()` — aguarda arquivo estável (30s sem crescimento)
-10. Upload: `MegaUploadService.Upload()` ou `UploadService.Upload()` (Google Drive)
-11. Mega: `ProgressStream` + `client.Upload(progressStream, ...)` com `CancellationToken`
-12. Se sucesso: apaga arquivo (se configurado), marca `HasRun`, balão "Sucesso", auto-exit em 5s
-13. Se falha: marca `HasFailed`, apaga arquivo (se `DeleteOnFailure`), balão "Erro", encerra
 
 ## Configuração (ConfigForm)
 
@@ -203,11 +174,3 @@ Pode ser configurado como ação no Agendador de Tarefas do Windows.
 ### Execução Manual
 
 Clique com botão direito no ícone da bandeja → "Executar backup agora".
-
-## Limitações Conhecidas
-
-- **MegaApiClient 1.10.5**: pastas compartilhadas retornam `"Attribute deserialization failed: ..."` como nome (bug desde 2015, GitHub #9). Como workaround, o ID da pasta pode ser inserido manualmente no campo "ID Pasta Compartilhada", que tem prioridade sobre o nome.
-- **Google Drive Service Account**: não consegue fazer upload para Drive pessoal sem ser adicionada como editora em uma pasta compartilhada. Requer Google Workspace + Shared Drive para upload direto.
-- **Google Drive OAuth**: requer configuração no Google Cloud Console (Client ID, Client Secret, redirect URI loopback).
-- **Agendamento único**: suporta apenas uma data/hora, sem recorrência.
-- **Logs**: não há limpeza automática de logs antigos.

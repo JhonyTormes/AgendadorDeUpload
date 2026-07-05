@@ -161,7 +161,7 @@ namespace AgendadorDeUpload
                     $"Backup programado para {scheduled:dd/MM/yyyy HH:mm}.", ToolTipIcon.Info);
                 ShowStatus($"Aguardando {scheduled:dd/MM HH:mm}");
 
-                _scheduleTimer = new System.Windows.Forms.Timer { Interval = 30000 };
+                _scheduleTimer = new System.Windows.Forms.Timer { Interval = 15000 };
                 _scheduleTimer.Tick += (s, args2) =>
                 {
                     if (AppState.IsRunning) return;

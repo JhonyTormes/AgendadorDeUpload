@@ -472,14 +472,12 @@ namespace AgendadorDeUpload.Forms
             try
             {
                 var secrets = new ClientSecrets { ClientId = clientId, ClientSecret = clientSecret };
-                var credential = await Task.Run(() =>
-                    GoogleWebAuthorizationBroker.AuthorizeAsync(
-                        secrets,
-                        new[] { DriveService.Scope.Drive },
-                        "user",
-                        CancellationToken.None,
-                        new FileDataStore(System.IO.Path.GetTempPath() + "gdrive-oauth", true))
-                );
+                var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
+                    secrets,
+                    new[] { DriveService.Scope.Drive },
+                    "user",
+                    CancellationToken.None,
+                    new FileDataStore(System.IO.Path.GetTempPath() + "gdrive-oauth", true));
 
                 _oauthRefreshToken = credential.Token.RefreshToken;
 

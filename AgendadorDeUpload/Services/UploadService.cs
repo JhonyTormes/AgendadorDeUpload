@@ -103,6 +103,10 @@ namespace AgendadorDeUpload.Services
             LogService.Write($"Upload iniciado: {fileName}");
             onProgress?.Invoke($"Enviando {fileName}...");
 
+            var fileSize = new FileInfo(filePath).Length;
+            var startTime = DateTime.UtcNow;
+            var lastReportedPct = -1;
+
             using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read))
             {
                 // Correção 2: Mudança de "application/octet-stream" para null para forçar o Google a processar os metadados do fileMetadata corretamente
@@ -111,11 +115,41 @@ namespace AgendadorDeUpload.Services
 
                 request.SupportsAllDrives = true;
 
-                var progress = request.Upload();
-
-                if (progress.Status == Google.Apis.Upload.UploadStatus.Failed)
+                request.ProgressChanged += (progress) =>
                 {
-                    var erroReal = progress.Exception?.InnerException?.Message ?? progress.Exception?.Message;
+                    if (progress.Status == Google.Apis.Upload.UploadStatus.Uploading && fileSize > 0)
+                    {
+                        var pct = (int)(progress.BytesSent * 100.0 / fileSize);
+                        if (pct - lastReportedPct >= 5 || pct >= 100)
+                        {
+                            lastReportedPct = pct;
+                            var elapsed = DateTime.UtcNow - startTime;
+                            string eta;
+                            if (pct > 0)
+                            {
+                                var totalEst = TimeSpan.FromTicks((long)(elapsed.Ticks * 100.0 / pct));
+                                var remaining = totalEst - elapsed;
+                                eta = remaining.TotalMinutes >= 1
+                                    ? $"{remaining.Minutes}m{remaining.Seconds}s"
+                                    : $"{remaining.Seconds}s";
+                            }
+                            else
+                            {
+                                eta = "calculando...";
+                            }
+
+                            var msg = $"{pct}% (tempo restante estimado: {eta})";
+                            LogService.Write($"Google Drive: {msg}");
+                            onProgress?.Invoke(msg);
+                        }
+                    }
+                };
+
+                var result = request.Upload();
+
+                if (result.Status == Google.Apis.Upload.UploadStatus.Failed)
+                {
+                    var erroReal = result.Exception?.InnerException?.Message ?? result.Exception?.Message;
                     throw new InvalidOperationException($"Falha no upload: {erroReal}");
                 }
 

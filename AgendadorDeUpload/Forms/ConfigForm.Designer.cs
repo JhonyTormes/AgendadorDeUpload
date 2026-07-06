@@ -359,45 +359,53 @@ namespace AgendadorDeUpload.Forms
             // 
             // lblOAuthClientId
             // 
-            this.lblOAuthClientId.Location = new System.Drawing.Point(0, 0);
+            this.lblOAuthClientId.Location = new System.Drawing.Point(10, 342);
             this.lblOAuthClientId.Name = "lblOAuthClientId";
-            this.lblOAuthClientId.Size = new System.Drawing.Size(100, 23);
+            this.lblOAuthClientId.Size = new System.Drawing.Size(140, 22);
             this.lblOAuthClientId.TabIndex = 22;
+            this.lblOAuthClientId.Text = "Client ID:";
+            this.lblOAuthClientId.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // txtOAuthClientId
             // 
-            this.txtOAuthClientId.Location = new System.Drawing.Point(0, 0);
+            this.txtOAuthClientId.Location = new System.Drawing.Point(155, 342);
             this.txtOAuthClientId.Name = "txtOAuthClientId";
-            this.txtOAuthClientId.Size = new System.Drawing.Size(100, 20);
+            this.txtOAuthClientId.Size = new System.Drawing.Size(330, 20);
             this.txtOAuthClientId.TabIndex = 23;
             // 
             // lblOAuthClientSecret
             // 
-            this.lblOAuthClientSecret.Location = new System.Drawing.Point(0, 0);
+            this.lblOAuthClientSecret.Location = new System.Drawing.Point(10, 370);
             this.lblOAuthClientSecret.Name = "lblOAuthClientSecret";
-            this.lblOAuthClientSecret.Size = new System.Drawing.Size(100, 23);
+            this.lblOAuthClientSecret.Size = new System.Drawing.Size(140, 22);
             this.lblOAuthClientSecret.TabIndex = 24;
+            this.lblOAuthClientSecret.Text = "Client Secret:";
+            this.lblOAuthClientSecret.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
             // 
             // txtOAuthClientSecret
             // 
-            this.txtOAuthClientSecret.Location = new System.Drawing.Point(0, 0);
+            this.txtOAuthClientSecret.Location = new System.Drawing.Point(155, 370);
             this.txtOAuthClientSecret.Name = "txtOAuthClientSecret";
-            this.txtOAuthClientSecret.Size = new System.Drawing.Size(100, 20);
+            this.txtOAuthClientSecret.Size = new System.Drawing.Size(330, 20);
             this.txtOAuthClientSecret.TabIndex = 25;
             // 
             // btnAuthorizeOAuth
             // 
-            this.btnAuthorizeOAuth.Location = new System.Drawing.Point(0, 0);
+            this.btnAuthorizeOAuth.Location = new System.Drawing.Point(155, 398);
             this.btnAuthorizeOAuth.Name = "btnAuthorizeOAuth";
             this.btnAuthorizeOAuth.Size = new System.Drawing.Size(75, 23);
             this.btnAuthorizeOAuth.TabIndex = 26;
+            this.btnAuthorizeOAuth.Text = "Autorizar";
+            this.btnAuthorizeOAuth.Click += new System.EventHandler(this.BtnAuthorizeOAuth_Click);
             // 
             // lblOAuthStatus
             // 
-            this.lblOAuthStatus.Location = new System.Drawing.Point(0, 0);
+            this.lblOAuthStatus.Location = new System.Drawing.Point(240, 400);
             this.lblOAuthStatus.Name = "lblOAuthStatus";
-            this.lblOAuthStatus.Size = new System.Drawing.Size(100, 23);
+            this.lblOAuthStatus.Size = new System.Drawing.Size(250, 22);
             this.lblOAuthStatus.TabIndex = 27;
+            this.lblOAuthStatus.Text = "Não autorizado";
+            this.lblOAuthStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             // 
             // lblMegaEmail
             // 
@@ -590,7 +598,7 @@ namespace AgendadorDeUpload.Forms
             this.MaximizeBox = false;
             this.MinimizeBox = false;
             this.Name = "ConfigForm";
-            this.ShowInTaskbar = false;
+            this.ShowInTaskbar = true;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "Configurações - Agendador de Upload";
             this.ResumeLayout(false);

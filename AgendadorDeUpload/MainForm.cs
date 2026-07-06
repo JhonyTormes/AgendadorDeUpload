@@ -466,6 +466,19 @@ namespace AgendadorDeUpload
             if (_config == null && !TryLoadConfig())
                 return;
 
+            _scheduleTimer?.Stop();
+            _scheduleTimer?.Dispose();
+            _scheduleTimer = null;
+
+            _config.ScheduledTime = "";
+            try
+            {
+                var json = _config.ToJson();
+                var encrypted = SecureStorage.Encrypt(json, AppState.MasterPassword);
+                SecureStorage.SaveToFile(SecureStorage.GetDefaultSettingsPath(), encrypted);
+            }
+            catch { }
+
             await ExecuteBackupFlow();
         }
 

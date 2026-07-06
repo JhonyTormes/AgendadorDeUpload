@@ -8,7 +8,7 @@ namespace AgendadorDeUpload.Security
     {
         private const int SaltSize = 16;
         private const int KeySize = 32;
-        private const int Iterations = 600000;
+        private const int Iterations = 300000;
 
         public static string HashPassword(string password)
         {

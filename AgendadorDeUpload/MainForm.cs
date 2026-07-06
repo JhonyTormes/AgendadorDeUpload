@@ -80,6 +80,13 @@ namespace AgendadorDeUpload
         {
             try
             {
+                if (AppState.CachedConfigJson != null)
+                {
+                    _config = BackupConfig.FromJson(AppState.CachedConfigJson);
+                    AppState.CachedConfigJson = null;
+                    return _config != null;
+                }
+
                 var settingsPath = SecureStorage.GetDefaultSettingsPath();
                 var encrypted = SecureStorage.LoadFromFile(settingsPath);
                 if (encrypted == null) return false;

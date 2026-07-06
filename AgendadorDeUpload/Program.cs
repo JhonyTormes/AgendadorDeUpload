@@ -60,6 +60,7 @@ namespace AgendadorDeUpload
 
                         AppState.MasterPassword = prompt.Password;
                         AppState.LastAuthTime = DateTime.Now;
+                        AppState.CachedConfigJson = json;
                     }
                 }
                 else

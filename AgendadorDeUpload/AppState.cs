@@ -9,5 +9,6 @@ namespace AgendadorDeUpload
         public static DateTime? LastAuthTime { get; set; }
         public static bool IsRunning { get; set; }
         public static CancellationTokenSource CancelSource { get; set; }
+        public static string CachedConfigJson { get; set; }
     }
 }

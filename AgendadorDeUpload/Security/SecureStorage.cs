@@ -8,7 +8,7 @@ namespace AgendadorDeUpload.Security
     public static class SecureStorage
     {
         private const int SaltSize = 16;
-        private const int Pbkdf2Iterations = 600000;
+        private const int Pbkdf2Iterations = 300000;
         private static readonly byte[] LegacySalt = Encoding.UTF8.GetBytes("AgendadorDeUpload_v2");
 
         public static string Encrypt(string plainText, string password)

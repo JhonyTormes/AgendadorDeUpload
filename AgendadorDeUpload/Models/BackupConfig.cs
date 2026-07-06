@@ -6,6 +6,10 @@ namespace AgendadorDeUpload.Models
     [Serializable]
     public class BackupConfig
     {
+        public string UploadMode { get; set; } = "File";
+        public string UploadFilePath { get; set; }
+        public string MachineId { get; set; }
+
         public string SqlServer { get; set; }
         public string SqlDatabase { get; set; }
         public string SqlUsername { get; set; }

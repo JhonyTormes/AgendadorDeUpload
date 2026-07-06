@@ -23,6 +23,8 @@ namespace AgendadorDeUpload.Forms
         private string _selectedJsonContent;
         private string _oauthRefreshToken;
         private bool _scheduleCancelled;
+        private bool _jsonFileModified;
+        private bool _oauthSecretModified;
         public string SavedPassword { get; private set; }
 
         public ConfigForm(BackupConfig config, string existingPassword)
@@ -36,6 +38,12 @@ namespace AgendadorDeUpload.Forms
 
         private void LoadConfig()
         {
+            txtUploadFilePath.Text = _config.UploadFilePath ?? "";
+
+            var isBackupMode = _config.UploadMode == "Backup";
+            chkBackupMode.Checked = isBackupMode;
+            grpBackupSql.Visible = isBackupMode;
+
             txtSqlServer.Text = _config.SqlServer ?? "";
             txtSqlDatabase.Text = _config.SqlDatabase ?? "";
             txtSqlUsername.Text = _config.SqlUsername ?? "";
@@ -45,18 +53,20 @@ namespace AgendadorDeUpload.Forms
 
             if (!string.IsNullOrEmpty(_config.ServiceAccountJsonPath))
                 txtServiceAccountPath.Text = _config.ServiceAccountJsonPath;
-            _selectedJsonContent = _config.ServiceAccountJson;
+            _selectedJsonContent = null;
+            _jsonFileModified = false;
 
             txtOAuthClientId.Text = _config.OAuthClientId ?? "";
-            txtOAuthClientSecret.Text = _config.OAuthClientSecret ?? "";
+            txtOAuthClientSecret.Text = "";
+            _oauthSecretModified = false;
             _oauthRefreshToken = _config.OAuthRefreshToken;
+
+            txtOAuthClientSecret.TextChanged -= TxtOAuthClientSecret_TextChanged;
+            txtOAuthClientSecret.TextChanged += TxtOAuthClientSecret_TextChanged;
 
             txtMegaEmail.Text = _config.MegaEmail ?? "";
             txtMegaPassword.Text = _config.MegaPassword ?? "";
             txtMegaFolder.Text = _config.MegaFolder ?? "";
-            txtMegaFolderId.Text = _config.MegaFolderId ?? "";
-
-            txtDriveFolderId.Text = _config.GoogleDriveFolderId ?? "";
 
             txtBackupFileName.Text = _config.BackupFileName ?? "";
             chkDeleteAfterUpload.Checked = _config.DeleteAfterUpload;
@@ -65,16 +75,19 @@ namespace AgendadorDeUpload.Forms
             if (_config.AuthMethod == "Mega")
             {
                 rbAuthMega.Checked = true;
+                txtFolderLink.Text = _config.MegaFolderId ?? "";
             }
             else if (_config.AuthMethod == "OAuth" && !string.IsNullOrEmpty(_config.OAuthRefreshToken))
             {
                 rbAuthOAuth.Checked = true;
                 lblOAuthStatus.Text = "Autorizado";
                 lblOAuthStatus.ForeColor = System.Drawing.Color.Green;
+                txtFolderLink.Text = _config.GoogleDriveFolderId ?? "";
             }
             else
             {
                 rbAuthServiceAccount.Checked = true;
+                txtFolderLink.Text = _config.GoogleDriveFolderId ?? "";
             }
 
             bool hasSchedule = DateTime.TryParseExact(_config.ScheduledTime, "yyyy-MM-dd HH:mm",
@@ -95,6 +108,7 @@ namespace AgendadorDeUpload.Forms
             txtSqlPassword.Enabled = !_config.UseWindowsAuth;
 
             UpdateAuthVisibility();
+            UpdateBackupModeVisibility();
         }
 
         private void UpdateAuthVisibility()
@@ -111,8 +125,6 @@ namespace AgendadorDeUpload.Forms
             lblMegaFolder.Visible = isMega;
             txtMegaFolder.Visible = isMega;
             btnSelectMegaFolder.Visible = isMega;
-            lblMegaFolderId.Visible = isMega;
-            txtMegaFolderId.Visible = isMega;
 
             lblServiceAccount.Visible = isSA;
             txtServiceAccountPath.Visible = isSA;
@@ -124,10 +136,20 @@ namespace AgendadorDeUpload.Forms
             txtOAuthClientSecret.Visible = isOAuth;
             btnAuthorizeOAuth.Visible = isOAuth;
             lblOAuthStatus.Visible = isOAuth;
+        }
 
-            bool showDriveId = isSA || isOAuth;
-            lblDriveFolderId.Visible = showDriveId;
-            txtDriveFolderId.Visible = showDriveId;
+        private void UpdateBackupModeVisibility()
+        {
+            bool isBackupMode = chkBackupMode.Checked;
+            grpBackupSql.Visible = isBackupMode;
+            lblUploadFile.Visible = !isBackupMode;
+            txtUploadFilePath.Visible = !isBackupMode;
+            btnBrowseFile.Visible = !isBackupMode;
+
+            var btnY = isBackupMode ? 660 : 370;
+            btnSave.Location = new System.Drawing.Point(btnSave.Location.X, btnY);
+            btnCancel.Location = new System.Drawing.Point(btnCancel.Location.X, btnY);
+            this.ClientSize = new System.Drawing.Size(this.ClientSize.Width, isBackupMode ? 700 : 410);
         }
 
         private void UpdateScheduleButton()
@@ -344,6 +366,7 @@ namespace AgendadorDeUpload.Forms
                 {
                     txtServiceAccountPath.Text = dlg.FileName;
                     _selectedJsonContent = System.IO.File.ReadAllText(dlg.FileName);
+                    _jsonFileModified = true;
                 }
             }
         }
@@ -499,32 +522,87 @@ namespace AgendadorDeUpload.Forms
             }
         }
 
+        private void BtnBrowseFile_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                if (dlg.ShowDialog() == DialogResult.OK)
+                    txtUploadFilePath.Text = dlg.FileName;
+            }
+        }
+
+        private void TxtOAuthClientSecret_TextChanged(object sender, EventArgs e)
+        {
+            _oauthSecretModified = true;
+        }
+
+        private void ChkBackupMode_CheckedChanged(object sender, EventArgs e)
+        {
+            UpdateBackupModeVisibility();
+        }
+
+        private static string ParseFolderIdFromLink(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return input;
+
+            input = input.Trim();
+
+            var driveMatch = System.Text.RegularExpressions.Regex.Match(input,
+                @"drive\.google\.com/drive/(?:u/\d+/)?folders/([^/?&#]+)");
+            if (driveMatch.Success)
+                return driveMatch.Groups[1].Value;
+
+            var megaMatch = System.Text.RegularExpressions.Regex.Match(input,
+                @"mega(?:\.co)?\.nz/folder/([^#/?&]+)");
+            if (megaMatch.Success)
+                return megaMatch.Groups[1].Value;
+
+            return input;
+        }
+
         private void BtnSave_Click(object sender, EventArgs e)
         {
             SaveConfig(_scheduleCancelled ? "" : dtpSchedule.Value.ToString("yyyy-MM-dd HH:mm"));
         }
         private void SaveConfig(string scheduledTime)
         {
-            if (string.IsNullOrWhiteSpace(txtSqlServer.Text))
+            bool isBackupMode = chkBackupMode.Checked;
+            string uploadMode = isBackupMode ? "Backup" : "File";
+
+            if (!isBackupMode && string.IsNullOrWhiteSpace(txtUploadFilePath.Text))
             {
-                MessageBox.Show(this, "Informe o servidor SQL.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, "Selecione um arquivo para upload.", "Validação",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (string.IsNullOrWhiteSpace(txtSqlDatabase.Text))
+
+            if (isBackupMode)
             {
-                MessageBox.Show(this, "Informe o banco de dados.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            if (!chkWindowsAuth.Checked && string.IsNullOrWhiteSpace(txtSqlUsername.Text))
-            {
-                MessageBox.Show(this, "Informe o usuário SQL ou marque Autenticação Windows.",
-                    "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            if (string.IsNullOrWhiteSpace(txtBackupFolder.Text))
-            {
-                MessageBox.Show(this, "Informe a pasta de backup.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                if (string.IsNullOrWhiteSpace(txtSqlServer.Text))
+                {
+                    MessageBox.Show(this, "Informe o servidor SQL.", "Validação",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(txtSqlDatabase.Text))
+                {
+                    MessageBox.Show(this, "Informe o banco de dados.", "Validação",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (!chkWindowsAuth.Checked && string.IsNullOrWhiteSpace(txtSqlUsername.Text))
+                {
+                    MessageBox.Show(this, "Informe o usuário SQL ou marque Autenticação Windows.",
+                        "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(txtBackupFolder.Text))
+                {
+                    MessageBox.Show(this, "Informe a pasta de backup.", "Validação",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
             }
 
             string authMethod = rbAuthMega.Checked ? "Mega" : rbAuthOAuth.Checked ? "OAuth" : "ServiceAccount";
@@ -557,9 +635,11 @@ namespace AgendadorDeUpload.Forms
                 }
             }
 
-            if ((authMethod == "ServiceAccount" || authMethod == "OAuth") && string.IsNullOrWhiteSpace(txtDriveFolderId.Text))
+            string folderId = ParseFolderIdFromLink(txtFolderLink.Text);
+
+            if (string.IsNullOrWhiteSpace(folderId))
             {
-                MessageBox.Show(this, "Informe o ID da pasta do Google Drive.",
+                MessageBox.Show(this, "Informe o link ou ID da pasta de destino.",
                     "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -568,26 +648,29 @@ namespace AgendadorDeUpload.Forms
 
             var config = new BackupConfig
             {
+                MachineId = _config.MachineId,
+                UploadMode = uploadMode,
+                UploadFilePath = isBackupMode ? "" : txtUploadFilePath.Text.Trim(),
                 SqlServer = txtSqlServer.Text.Trim(),
                 SqlDatabase = txtSqlDatabase.Text.Trim(),
                 SqlUsername = txtSqlUsername.Text.Trim(),
                 SqlPassword = txtSqlPassword.Text,
                 UseWindowsAuth = chkWindowsAuth.Checked,
                 BackupFolder = txtBackupFolder.Text.Trim(),
-                ServiceAccountJsonPath = txtServiceAccountPath.Text,
-                ServiceAccountJson = _selectedJsonContent,
-                GoogleDriveFolderId = txtDriveFolderId.Text.Trim(),
+                ServiceAccountJsonPath = _jsonFileModified ? txtServiceAccountPath.Text : _config.ServiceAccountJsonPath,
+                ServiceAccountJson = _jsonFileModified ? _selectedJsonContent : _config.ServiceAccountJson,
+                GoogleDriveFolderId = authMethod != "Mega" ? folderId : _config.GoogleDriveFolderId,
                 ScheduledTime = scheduledTime,
                 StableSeconds = _config.StableSeconds,
                 PollIntervalMs = _config.PollIntervalMs,
                 AuthMethod = authMethod,
                 OAuthClientId = txtOAuthClientId.Text.Trim(),
-                OAuthClientSecret = txtOAuthClientSecret.Text.Trim(),
+                OAuthClientSecret = _oauthSecretModified ? txtOAuthClientSecret.Text : _config.OAuthClientSecret,
                 OAuthRefreshToken = _oauthRefreshToken,
                 MegaEmail = txtMegaEmail.Text.Trim(),
                 MegaPassword = txtMegaPassword.Text,
                 MegaFolder = txtMegaFolder.Text,
-                MegaFolderId = txtMegaFolderId.Text.Trim(),
+                MegaFolderId = authMethod == "Mega" ? folderId : _config.MegaFolderId,
                 BackupFileName = txtBackupFileName.Text.Trim(),
                 DeleteAfterUpload = chkDeleteAfterUpload.Checked,
                 DeleteOnFailure = chkDeleteOnFailure.Checked

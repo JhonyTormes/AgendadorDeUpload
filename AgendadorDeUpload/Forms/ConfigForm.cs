@@ -415,7 +415,6 @@ namespace AgendadorDeUpload.Forms
             }
 
             btnSelectMegaFolder.Enabled = false;
-            btnSelectMegaFolder.Text = "Carregando...";
             Cursor = Cursors.WaitCursor;
             var oldFolder = txtMegaFolder.Text;
             txtMegaFolder.Text = "Conectando ao Mega...";
@@ -450,7 +449,6 @@ namespace AgendadorDeUpload.Forms
             finally
             {
                 btnSelectMegaFolder.Enabled = true;
-                btnSelectMegaFolder.Text = "Selecionar...";
                 Cursor = Cursors.Default;
             }
         }

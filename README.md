@@ -43,10 +43,11 @@ Aplicação Windows Forms (.NET Framework 4.8) que gera backups de bancos SQL Se
 
 ### Segurança
 - **Senha Mestra**: criada no primeiro uso via `MasterPasswordSetupForm`; usada para criptografar todas as credenciais
-- Criptografia AES-256 com PBKDF2 (100.000 iterações) + DPAPI (ProtectedData)
+- Criptografia AES-256 com PBKDF2 (600.000 iterações, SHA-256) + DPAPI (ProtectedData)
+- Salt aleatório por instalação (16 bytes gerados via `RandomNumberGenerator`), armazenado inline no arquivo criptografado
 - Cache de senha por 1 minuto (`AppState.LastAuthTime`); após expirar, o prompt é exibido novamente ao abrir configurações ou executar manualmente
 - Config salva em `settings.enc` no mesmo diretório do executável
-- Hash da senha mestra via PBKDF2 com comparação em tempo constante (`FixedTimeEquals`)
+- Hash da senha mestra via PBKDF2 (600.000 iterações, SHA-256) com comparação em tempo constante (`FixedTimeEquals`)
 
 ### Controle de Execução
 - Execução assíncrona (`async Task`) com suporte a `CancellationToken`

@@ -7,28 +7,57 @@ namespace AgendadorDeUpload.Security
 {
     public static class SecureStorage
     {
-        private static readonly byte[] AppSalt = Encoding.UTF8.GetBytes("AgendadorDeUpload_v2");
+        private const int SaltSize = 16;
+        private const int Pbkdf2Iterations = 600000;
+        private static readonly byte[] LegacySalt = Encoding.UTF8.GetBytes("AgendadorDeUpload_v2");
 
         public static string Encrypt(string plainText, string password)
         {
-            var aesEncrypted = AesEncrypt(plainText, password);
+            var salt = new byte[SaltSize];
+            using (var rng = RandomNumberGenerator.Create())
+                rng.GetBytes(salt);
+
+            var aesEncrypted = AesEncrypt(plainText, password, salt);
             var dpapiProtected = ProtectedData.Protect(
                 Encoding.UTF8.GetBytes(aesEncrypted),
-                AppSalt,
+                salt,
                 DataProtectionScope.CurrentUser);
-            return Convert.ToBase64String(dpapiProtected);
+
+            var combined = new byte[SaltSize + dpapiProtected.Length];
+            Buffer.BlockCopy(salt, 0, combined, 0, SaltSize);
+            Buffer.BlockCopy(dpapiProtected, 0, combined, SaltSize, dpapiProtected.Length);
+
+            return Convert.ToBase64String(combined);
         }
 
         public static string Decrypt(string cipherText, string password)
         {
             try
             {
+                var data = Convert.FromBase64String(cipherText);
+
+                if (data.Length > SaltSize)
+                {
+                    try
+                    {
+                        var salt = new byte[SaltSize];
+                        Buffer.BlockCopy(data, 0, salt, 0, SaltSize);
+                        var dpapiBlob = new byte[data.Length - SaltSize];
+                        Buffer.BlockCopy(data, SaltSize, dpapiBlob, 0, dpapiBlob.Length);
+
+                        var dpapiResult = ProtectedData.Unprotect(dpapiBlob, salt, DataProtectionScope.CurrentUser);
+                        var aesResult = Encoding.UTF8.GetString(dpapiResult);
+                        return AesDecrypt(aesResult, password, salt);
+                    }
+                    catch { }
+                }
+
                 var dpapiUnprotected = ProtectedData.Unprotect(
-                    Convert.FromBase64String(cipherText),
-                    AppSalt,
+                    data,
+                    LegacySalt,
                     DataProtectionScope.CurrentUser);
-                var dpapiResult = Encoding.UTF8.GetString(dpapiUnprotected);
-                return AesDecrypt(dpapiResult, password);
+                var dpapiResult2 = Encoding.UTF8.GetString(dpapiUnprotected);
+                return AesDecrypt(dpapiResult2, password, LegacySalt);
             }
             catch
             {
@@ -36,11 +65,11 @@ namespace AgendadorDeUpload.Security
             }
         }
 
-        private static string AesEncrypt(string plainText, string password)
+        private static string AesEncrypt(string plainText, string password, byte[] salt)
         {
             using (var aes = Aes.Create())
             {
-                var key = new Rfc2898DeriveBytes(password, AppSalt, 100000);
+                var key = new Rfc2898DeriveBytes(password, salt, Pbkdf2Iterations, HashAlgorithmName.SHA256);
                 aes.Key = key.GetBytes(32);
                 aes.IV = key.GetBytes(16);
                 using (var ms = new MemoryStream())
@@ -55,11 +84,11 @@ namespace AgendadorDeUpload.Security
             }
         }
 
-        private static string AesDecrypt(string cipherText, string password)
+        private static string AesDecrypt(string cipherText, string password, byte[] salt)
         {
             using (var aes = Aes.Create())
             {
-                var key = new Rfc2898DeriveBytes(password, AppSalt, 100000);
+                var key = new Rfc2898DeriveBytes(password, salt, Pbkdf2Iterations, HashAlgorithmName.SHA256);
                 aes.Key = key.GetBytes(32);
                 aes.IV = key.GetBytes(16);
                 var buffer = Convert.FromBase64String(cipherText);

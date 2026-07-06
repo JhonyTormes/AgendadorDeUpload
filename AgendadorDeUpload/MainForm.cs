@@ -139,6 +139,9 @@ namespace AgendadorDeUpload
             }
 
             StartScheduler();
+
+            _trayIcon.ShowBalloonTip(3000, "Agendador de Upload",
+                "Aplicativo rodando na bandeja.", ToolTipIcon.Info);
         }
 
         private void StartScheduler()
